@@ -18,6 +18,13 @@ resource "yandex_vpc_subnet" "subnet-d" {
     v4_cidr_blocks = var.subnets[keys(var.subnets)[0]]
 }
 
+resource "yandex_vpc_address" "public-ip" {
+    name = "${local.linux_vm_name}-address"
+    external_ipv4_address {
+      zone_id = var.zone
+    }
+}
+
 data "yandex_compute_image" "ubuntu-2204-latest" { # image for new machine
     family = "ubuntu-2204-lts"
 }
@@ -45,7 +52,16 @@ resource "yandex_compute_instance" "first-vm" {
     }
 
     network_interface {
-        subnet_id = yandex_vpc_subnet.subnet-d.id
+        subnet_id       = yandex_vpc_subnet.subnet-d.id
+        nat             = true
+        nat_ip_address  = yandex_vpc_address.public-ip.external_ipv4_address[0].address
+    }
+
+    metadata = {
+      user-data = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
+        ydb_connect_string = yandex_ydb_database_serverless.first-ydb.ydb_full_endpoint,
+        bucket_domain_name = yandex_storage_bucket.first-bucket.bucket_domain_name
+      })
     }
 }
 
