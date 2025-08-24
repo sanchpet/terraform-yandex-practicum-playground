@@ -38,3 +38,4 @@ terraform.rc
 
 # Ignore sensitive files, such as service account keys
 key.json
+.env
