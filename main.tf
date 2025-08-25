@@ -5,22 +5,25 @@ locals {
   ydb_serverless_name = var.ydb_serverless_name != null ? var.ydb_serverless_name : "${var.name_prefix}-ydb-serverless"
   bucket_sa_name      = var.bucket_sa_name != null ? var.bucket_sa_name : "${var.name_prefix}-bucket-sa"
   bucket_name         = var.bucket_name != null ? var.bucket_name : "${var.name_prefix}-terraform-bucket-${random_string.bucket_name.result}"
-} 
-
-resource "yandex_vpc_network" "private" {
-  name = local.vpc_network_name
 }
 
-resource "yandex_vpc_subnet" "private" {
-  for_each = var.zones
+module "net" {
+  source = "github.com/terraform-yc-modules/terraform-yc-vpc.git?ref=19a9893f25b2536cea3c9c15c180c905ea37bf9c" # Commit hash for 1.0.7
 
-  name           = keys(var.subnets)[index(tolist(var.zones), each.value)]
-  zone           = each.value
-  network_id     = yandex_vpc_network.private.id
-  v4_cidr_blocks = var.subnets[each.value]
+  network_name = local.vpc_network_name
+  create_sg    = false
+
+  public_subnets = [
+    for zone in var.zones :
+    {
+      v4_cidr_blocks = var.subnets[zone]
+      zone           = zone
+      name           = zone
+    }
+  ]
 }
 
-resource "yandex_vpc_address" "public" {
+resource "yandex_vpc_address" "this" {
   for_each = var.zones
 
   name = length(var.zones) > 1 ? "${local.linux_vm_name}-address-${substr(each.value, -1, 0)}" : "${local.linux_vm_name}-address"
@@ -54,7 +57,7 @@ resource "yandex_compute_instance" "first-vm" {
   metadata = {
     user-data = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
       ydb_connect_string = yandex_ydb_database_serverless.first-ydb.ydb_full_endpoint,
-      bucket_domain_name = yandex_storage_bucket.first-bucket.bucket_domain_name
+      bucket_domain_name = module.s3.bucket_domain_name
     })
   }
 
@@ -75,9 +78,12 @@ resource "yandex_compute_instance" "first-vm" {
   }
 
   network_interface {
-    subnet_id       = yandex_vpc_subnet.private[each.value].id
-    nat             = true
-    nat_ip_address  = yandex_vpc_address.public[each.value].external_ipv4_address[0].address
+    subnet_id = {
+      for subnet in module.net.public_subnets :
+      subnet.zone => subnet.subnet_id
+    }[each.value]
+    nat            = true
+    nat_ip_address = yandex_vpc_address.this[each.value].external_ipv4_address[0].address
   }
 }
 
@@ -86,34 +92,11 @@ resource "yandex_ydb_database_serverless" "first-ydb" {
   location_id = "ru-central1"
 }
 
-resource "yandex_iam_service_account" "bucket" {
-  name = local.bucket_sa_name
-}
-
-resource "yandex_resourcemanager_folder_iam_member" "storage_editor" {
-  folder_id = var.folder_id
-  role      = "storage.editor"
-  member    = "serviceAccount:${yandex_iam_service_account.bucket.id}"
-}
-
-resource "yandex_iam_service_account_static_access_key" "bucket" {
-  service_account_id = yandex_iam_service_account.bucket.id
-  description        = "static access key for object storage"
-}
-
 resource "random_string" "bucket_name" {
   length  = 8
   special = false
   upper   = false
 }
-
-resource "yandex_storage_bucket" "first-bucket" {
-  bucket     = local.bucket_name
-  access_key = yandex_iam_service_account_static_access_key.bucket.access_key
-  secret_key = yandex_iam_service_account_static_access_key.bucket.secret_key
-  
-  depends_on = [ yandex_resourcemanager_folder_iam_member.storage_editor ]
-} 
 
 resource "yandex_compute_disk" "secondary_disk_a" {
   count = contains(var.zones, "ru-central1-a") ? var.secondary_disks.count : 0
@@ -159,3 +142,9 @@ resource "yandex_compute_snapshot" "initial" {
 
   depends_on = [time_sleep.wait_120_seconds]
 } 
+
+module "s3" {
+  source = "github.com/terraform-yc-modules/terraform-yc-s3.git?ref=9fc2f832875aefb6051a2aa47b5ecc9a7ea8fde5" # Commit hash for 1.0.2
+
+  bucket_name = local.bucket_name
+}

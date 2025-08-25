@@ -12,8 +12,7 @@ variable "folder_id" {
 variable "zones" {
   description = "(Optional) - Yandex Cloud Zones for provisoned resources."
   type        = set(string)
-  #default     = ["ru-central1-a", "ru-central1-b", "ru-central1-d"]
-  default     = ["ru-central1-a", "ru-central1-d"]
+  default     = ["ru-central1-a", "ru-central1-b", "ru-central1-d"]
 }
 
 variable "instance_resources" {
