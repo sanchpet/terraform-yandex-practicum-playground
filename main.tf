@@ -129,7 +129,7 @@ resource "yandex_compute_disk" "secondary_disk_d" {
 } 
 
 resource "time_sleep" "wait_120_seconds" {
-  create_duration = "120s"
+  create_duration = "180s"
 
   depends_on = [yandex_compute_instance.first-vm]
 } 
@@ -147,4 +147,14 @@ module "s3" {
   source = "github.com/terraform-yc-modules/terraform-yc-s3.git?ref=9fc2f832875aefb6051a2aa47b5ecc9a7ea8fde5" # Commit hash for 1.0.2
 
   bucket_name = local.bucket_name
+}
+
+resource "terraform_data" "get_serial_output" {
+  for_each = yandex_compute_instance.first-vm
+
+  provisioner "local-exec" {
+    command = "yc compute instance get-serial-port-output --id ${each.value.id} --folder-id ${var.folder_id} > serial_output_${each.value.name}.txt"
+  }
+
+  depends_on = [ time_sleep.wait_120_seconds ]
 }
